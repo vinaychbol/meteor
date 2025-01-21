@@ -15,6 +15,8 @@ from lji_meteor.utils.decorators import env_and_creds_layer
 from typing import Any
 from lji_meteor.tenant.tenant import Tenant
 from lji_meteor.api_gateway import stages
+from urllib.parse import urlparse
+import psycopg2
 
 tenant = Tenant()
 
@@ -122,10 +124,9 @@ def webapp(env: str = None, profile: str = None,tenant_creation: bool = False, d
 
 @app.command()
 @env_and_creds_layer
-def db(env: str = None, profile: str = None, data: str = None, get_credentials: str = None):
+def db(env: str = None, profile: str = None, data: str = None, get_credentials: bool = None, superuser: str = None, tenant_schema: str = None, email: str = None):
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
-        
     with console.status("Please wait - Clearing ports...", spinner="bouncingBar"):
                         out = subprocess.call(['kill $(lsof -t -i :2345) >/dev/null 2>&1'], shell=True)
                         out = subprocess.call(['kill $(lsof -t -i :9736) >/dev/null 2>&1'], shell=True)
@@ -158,9 +159,58 @@ def db(env: str = None, profile: str = None, data: str = None, get_credentials: 
                     shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     print("\n[green]Succesfully connected to DB[/green]")
-    if get_credentials:
+    db_con_url = ""
+    if get_credentials or superuser:
         with console.status("Please wait - Featching RDS Credentials...", spinner="earth"):
-            pass
+            client = session.client('ssm', region_name=data['db']['region'])
+            paramenter_name = f"/db/{env}/rds/db-con-url"
+            print(f"\n[yellow]Fetching RDS Connection URL...{paramenter_name}[/yellow]")
+            response = client.get_parameter(Name=paramenter_name,WithDecryption=True)
+            db_con_url = response['Parameter']['Value']
+            print("\n[yellow]RDS Connection URL:[/yellow] " + db_con_url)
+        
+    if superuser:
+        result = urlparse(db_con_url)
+        username = result.username
+        password = result.password
+        database = result.path[1:]  # Removing the leading slash from the path
+        hostname = "localhost"
+        port = "2345"
+
+        try:
+            # Establish connection to the database
+            connection = psycopg2.connect(
+                database=database,
+                user=username,
+                password=password,
+                host=hostname,
+                port=port
+            )
+            
+            with connection.cursor() as curs:
+                if not tenant_schema:
+                    tenant_schema = input("Enter the tenant schema: ")
+                    
+                update_query = f"""
+                UPDATE {tenant_schema}.auth_user
+                SET is_superuser = TRUE, is_staff = TRUE
+                WHERE email = %s;
+                """
+                curs.execute(update_query, (superuser,))
+                connection.commit()
+
+                print(f"Updated user {superuser} in schema {tenant_schema}.")
+
+        except Exception as e:
+            print(f"Error connecting to the database: {e}")
+        finally:
+            # Make sure to close the connection
+            if connection:
+                connection.close()
+
+        
+        
+    
 
 @app.command()
 @env_and_creds_layer

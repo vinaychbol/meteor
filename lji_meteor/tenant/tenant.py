@@ -16,9 +16,7 @@ class Tenant():
         """
         
         return_code = subprocess.call(
-                [f'export APIGatewayURL=https://api.{env}.gravtee.com/ \
-                export PRIVATE_PEM_FILE=s3://gravty-{env}/cert/keys/private.pem \
-                aws ecs execute-command  \
+                [f'aws ecs execute-command  \
                 --region {ecs_region} \
                 --cluster {cluster_id} \
                 --task {task_id} \

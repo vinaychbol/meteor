@@ -11,6 +11,8 @@ typer = "^0.15.1"
 boto3 = "^1.35.87"
 rich = "^13.9.4"
 survey= "^5.4.2"
+psycopg2-binary = "^2.9.10"
+
 
 [tool.poetry.scripts]
 meteor = "lji_meteor.main:app"
