@@ -14,6 +14,7 @@ import time
 from lji_meteor.utils.decorators import env_and_creds_layer
 from typing import Any
 from lji_meteor.tenant.tenant import Tenant
+from lji_meteor.api_gateway import stages
 
 tenant = Tenant()
 
@@ -121,11 +122,11 @@ def webapp(env: str = None, profile: str = None,tenant_creation: bool = False, d
 
 @app.command()
 @env_and_creds_layer
-def db(env: str = None, profile: str = None,tenant_creation: bool = False, data: str = None, get_credentials: str = None):
+def db(env: str = None, profile: str = None, data: str = None, get_credentials: str = None):
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
         
-    with console.status("Please wait - Clearing ports...", spinner="monkey"):
+    with console.status("Please wait - Clearing ports...", spinner="bouncingBar"):
                         out = subprocess.call(['kill $(lsof -t -i :2345) >/dev/null 2>&1'], shell=True)
                         out = subprocess.call(['kill $(lsof -t -i :9736) >/dev/null 2>&1'], shell=True)
                         out = subprocess.call(['kill $(lsof -t -i :8843) >/dev/null 2>&1'], shell=True)
@@ -142,20 +143,21 @@ def db(env: str = None, profile: str = None,tenant_creation: bool = False, data:
                         if not response['Success']:
                             raise Exception("Something went wrong with SSH")
                             
-                        return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
-                          -Nf -M \
-                          -L 2345:{0} \
-                          -L 9736:{2} \
-                          -L 8843:{6} \
-                            -L 5439:{0} \
-                          -o "UserKnownHostsFile=/dev/null" \
-                          -o "StrictHostKeyChecking=no" \
-                          -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={3} --profile={4}" \
-                          ec2-user@{5}'.format(data['db']['rds'], data['db']['redshift'], data['db']['redis'],
-                                               data['db']['region'], profile.strip(), data['db']['bastion_instance_id'],
-                                               data['db']['engine_url'])],
-                                        shell=True)        
-                        print("\n[green]Succesfully connected to DB[/green]")
+    return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
+        -Nf -M \
+        -L 2345:{0} \
+        -L 9736:{2} \
+        -L 8843:{6} \
+        -L 5439:{0} \
+        -o "UserKnownHostsFile=/dev/null" \
+        -o "StrictHostKeyChecking=no" \
+        -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={3} --profile={4}" \
+        ec2-user@{5}'.format(data['db']['rds'], data['db']['redshift'], data['db']['redis'],
+                            data['db']['region'], profile.strip(), data['db']['bastion_instance_id'],
+                            data['db']['engine_url'])],
+                    shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    print("\n[green]Succesfully connected to DB[/green]")
     if get_credentials:
         with console.status("Please wait - Featching RDS Credentials...", spinner="earth"):
             pass
@@ -194,25 +196,28 @@ def datalake(env: str = None, profile: str = None, data: str = None, get_credent
                         if not response['Success']:
                             raise Exception("Something went wrong with SSH")
                             
-                        return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
-                                  -Nf -M \
-                                  -L 9154:{0} \
-                                  -o "UserKnownHostsFile=/dev/null" \
-                                  -o "StrictHostKeyChecking=no" \
-                                  -o ProxyCommand="{4}aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={1} --profile={2}" \
-                                  ec2-user@{3}'.format(data['ec2']['airflow_dns'], data['db']['region'],
-                                                       profile, data['db']['bastion_instance_id'],
-                                                       aws_directory)],
-                                                shell=True)
+    return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
+                -Nf -M \
+                -L 9154:{0} \
+                -o "UserKnownHostsFile=/dev/null" \
+                -o "StrictHostKeyChecking=no" \
+                -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={1} --profile={2}" \
+                ec2-user@{3}'.format(data['ec2']['airflow_dns'], data['db']['region'],
+                                    profile, data['db']['bastion_instance_id'])],shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-                        print("\n[green]Succesfully connected to Datalake[/green]")
+    print("\n[green]Succesfully connected to Datalake[/green]")
 
 
 @app.command()
 @env_and_creds_layer
-def test(env: str = None, profile: str = None):
-    print(env, profile)
-
+def api_gateway(env: str = None, profile: str = None,data: str = None, disable_logging: bool = False):
+    data = json.loads(data)
+    
+    if disable_logging:
+        region = data['db']['region']
+        stage = stages.Stage(profile, env, region)
+        stage.turn_off_logging()
+    
 
 
 if __name__ == "__main__":
