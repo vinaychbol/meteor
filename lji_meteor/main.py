@@ -141,7 +141,14 @@ def webapp(
 
 @app.command()
 @env_and_creds_layer
-def db(env: str = None, profile: str = None, data: str = None, get_credentials: bool = None, superuser: str = None, tenant_schema: str = None, email: str = None):
+def db(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None,
+    get_credentials: Annotated[bool, typer.Option(help="Flag to get database credentials")] = None,
+    superuser: Annotated[str, typer.Option(help="Email of the superuser to be updated")] = None,
+    tenant_schema: Annotated[str, typer.Option(help="Tenant schema name")] = None,
+    email: Annotated[str, typer.Option(help="Email address for authentication")] = None):
     """
     Connect to RDS using the CLI or Use --options flag to see more options
     """
