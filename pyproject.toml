@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lji-meteor"
-version = "0.1.1"
+version = "0.1.2"
 description = ""
 authors = ["vinaybol <vinay.chindukuri@lji.io>"]
 readme = "README.md"
@@ -12,6 +12,7 @@ boto3 = "^1.35.87"
 rich = "^13.9.4"
 survey= "^5.4.2"
 psycopg2-binary = "^2.9.10"
+requests = "^2.32.3"
 
 
 [tool.poetry.scripts]
