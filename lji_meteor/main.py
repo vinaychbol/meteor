@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import typer
+from typing_extensions import Annotated
 import survey
 import sys
 import subprocess
@@ -75,7 +76,15 @@ id_rsa_public = get_rsa_pair()
 
 @app.command()
 @env_and_creds_layer
-def webapp(env: str = None, profile: str = None,tenant_creation: bool = False, data: str = None):
+def webapp(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    tenant_creation: Annotated[bool, typer.Option(help="Flag to initiate tenant creation")] = False,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None):
+    """
+    Connect to Webapp using the CLI or Use --options flag to see more options
+    """
+    
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
 
@@ -133,6 +142,9 @@ def webapp(env: str = None, profile: str = None,tenant_creation: bool = False, d
 @app.command()
 @env_and_creds_layer
 def db(env: str = None, profile: str = None, data: str = None, get_credentials: bool = None, superuser: str = None, tenant_schema: str = None, email: str = None):
+    """
+    Connect to RDS using the CLI or Use --options flag to see more options
+    """
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     db = rds.DB(session, data, profile, id_rsa_public, env)
@@ -185,7 +197,14 @@ def db(env: str = None, profile: str = None, data: str = None, get_credentials: 
 
 @app.command()
 @env_and_creds_layer
-def datalake(env: str = None, profile: str = None, data: str = None, get_credentials: str = None):
+def datalake(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None,
+    get_credentials: Annotated[str, typer.Option(help="Get Credentials")] = None):
+    """
+    Connect to Datalake using the CLI
+    """
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     
@@ -231,7 +250,17 @@ def datalake(env: str = None, profile: str = None, data: str = None, get_credent
 
 @app.command()
 @env_and_creds_layer
-def api_gateway(env: str = None, profile: str = None,data: str = None, disable_logging: bool = False, generate_api_key: bool = False, schema: str = None):
+def api_gateway(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None,
+    disable_logging: Annotated[bool, typer.Option(help="Disable API Gateway Logging")] = False,
+    generate_api_key: Annotated[bool, typer.Option(help="Generate API Key")] = False,
+    schema: Annotated[str, typer.Option(help="Schema Name for API Key Generation")] = None
+):
+    """
+    LJI API Gateway CLI to automate common tasks on API Gateway Service 
+    """
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     
@@ -250,6 +279,9 @@ def api_gateway(env: str = None, profile: str = None,data: str = None, disable_l
     
 @app.command()
 def deploy(env: str = None, service: str = None, tag: str = None):
+    """
+    Trigger auto deployment lambda from CLI
+    """
     if not env:
         env = input("Enter the environment: ")
     if not service:
@@ -269,6 +301,9 @@ def deploy(env: str = None, service: str = None, tag: str = None):
         
 @app.command()
 def upgrade():
+    """
+    Upgrade the CLI to the latest version
+    """
     print("Please wait - Upgrading the CLI...")
     subprocess.call(['pipx install https://github.com/vinaychbol/meteor/raw/refs/heads/main/dist/lji_meteor-latest.gz --force'], shell=True)
     print("\n[green]Successfully upgraded the CLI[/green]")
