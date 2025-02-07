@@ -267,5 +267,11 @@ def deploy(env: str = None, service: str = None, tag: str = None):
         console.print("\n[bold blue]Deployment Triggered Successfully[/bold blue]")
         print(json.dumps(json.loads(response), indent=4))
         
+@app.command()
+def upgrade():
+    print("Please wait - Upgrading the CLI...")
+    subprocess.call(['pipx install https://github.com/vinaychbol/meteor/raw/refs/heads/main/dist/lji_meteor-latest.gz --force'], shell=True)
+    print("\n[green]Successfully upgraded the CLI[/green]")
+        
 if __name__ == "__main__":
     app()
