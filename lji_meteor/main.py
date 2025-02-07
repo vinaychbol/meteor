@@ -13,8 +13,12 @@ from rich.text import Text
 import time
 from lji_meteor.utils.decorators import env_and_creds_layer
 from typing import Any
+
 from lji_meteor.tenant.tenant import Tenant
-from lji_meteor.api_gateway import stages
+from lji_meteor.api_gateway import api_key, stages
+from lji_meteor.rds import rds
+from lji_meteor.autodeployment import deploy_lambda
+
 from urllib.parse import urlparse
 import psycopg2
 
@@ -64,6 +68,10 @@ def get_rsa_pair():
             return id_rsa_pub
         
 id_rsa_public = get_rsa_pair()
+
+
+
+
 
 @app.command()
 @env_and_creds_layer
@@ -127,47 +135,10 @@ def webapp(env: str = None, profile: str = None,tenant_creation: bool = False, d
 def db(env: str = None, profile: str = None, data: str = None, get_credentials: bool = None, superuser: str = None, tenant_schema: str = None, email: str = None):
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
-    with console.status("Please wait - Clearing ports...", spinner="bouncingBar"):
-                        out = subprocess.call(['kill $(lsof -t -i :2345) >/dev/null 2>&1'], shell=True)
-                        out = subprocess.call(['kill $(lsof -t -i :9736) >/dev/null 2>&1'], shell=True)
-                        out = subprocess.call(['kill $(lsof -t -i :8843) >/dev/null 2>&1'], shell=True)
-                        print("\n[yellow]Cleared the ports successfully[/yellow]")
-                        
-    with console.status("Please wait - Connecting to RDS...", spinner="earth"):
-                        response = session.client('ec2-instance-connect', region_name=data['db']['region']).send_ssh_public_key(
-                                InstanceId=data['db']['bastion_instance_id'],
-                                InstanceOSUser='ec2-user',
-                                SSHPublicKey=id_rsa_public,
-                                AvailabilityZone=data['db']['az']
-                            )
-                        
-                        if not response['Success']:
-                            raise Exception("Something went wrong with SSH")
-                            
-    return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
-        -Nf -M \
-        -L 2345:{0} \
-        -L 9736:{2} \
-        -L 8843:{6} \
-        -L 5439:{0} \
-        -o "UserKnownHostsFile=/dev/null" \
-        -o "StrictHostKeyChecking=no" \
-        -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={3} --profile={4}" \
-        ec2-user@{5}'.format(data['db']['rds'], data['db']['redshift'], data['db']['redis'],
-                            data['db']['region'], profile.strip(), data['db']['bastion_instance_id'],
-                            data['db']['engine_url'])],
-                    shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    print("\n[green]Succesfully connected to DB[/green]")
+    db = rds.DB(session, data, profile, id_rsa_public, env)
     db_con_url = ""
     if get_credentials or superuser:
-        with console.status("Please wait - Featching RDS Credentials...", spinner="earth"):
-            client = session.client('ssm', region_name=data['db']['region'])
-            paramenter_name = f"/db/{env}/rds/db-con-url"
-            print(f"\n[yellow]Fetching RDS Connection URL...{paramenter_name}[/yellow]")
-            response = client.get_parameter(Name=paramenter_name,WithDecryption=True)
-            db_con_url = response['Parameter']['Value']
-            print("\n[yellow]RDS Connection URL:[/yellow] " + db_con_url)
+        db_con_url = db.get_db_url()   
         
     if superuser:
         result = urlparse(db_con_url)
@@ -260,15 +231,41 @@ def datalake(env: str = None, profile: str = None, data: str = None, get_credent
 
 @app.command()
 @env_and_creds_layer
-def api_gateway(env: str = None, profile: str = None,data: str = None, disable_logging: bool = False):
+def api_gateway(env: str = None, profile: str = None,data: str = None, disable_logging: bool = False, generate_api_key: bool = False, schema: str = None):
     data = json.loads(data)
+    session = boto3.Session(profile_name=profile)
     
     if disable_logging:
         region = data['db']['region']
         stage = stages.Stage(profile, env, region)
         stage.turn_off_logging()
+        return
+    elif generate_api_key:
+        apikey = api_key.ApiKey(session, profile, data, id_rsa_public, env)
+        if not schema:
+            schema = input("Enter the schema name for which you want to generate the API Key: ")
+            
+        apikey.add_x_api_key(schema)
+        return
     
-
-
+@app.command()
+def deploy(env: str = None, service: str = None, tag: str = None):
+    if not env:
+        env = input("Enter the environment: ")
+    if not service:
+        service = input("Enter the service name: ")
+    if not tag:
+        tag = input("Enter the tag: ")
+    
+    with console.status("Please wait - Triggering auto deployment lambda...", spinner="earth"):
+        response = deploy_lambda.deploy(env, service, tag)
+        
+    if "error" in response:
+        console.print("\n[bold red]Error Triggering Deployment[/bold red]")
+        print(json.dumps(json.loads(response), indent=4))
+    else:
+        console.print("\n[bold blue]Deployment Triggered Successfully[/bold blue]")
+        print(json.dumps(json.loads(response), indent=4))
+        
 if __name__ == "__main__":
     app()
