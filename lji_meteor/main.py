@@ -208,6 +208,7 @@ def datalake(
     env: Annotated[str, typer.Option(help="Environment Name")] = None,
     profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
     data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None,
+    connect: Annotated[bool, typer.Option(help="Connect to Datalake Shell")] = False,
     get_credentials: Annotated[str, typer.Option(help="Get Credentials")] = None):
     """
     Connect to Datalake using the CLI
@@ -251,8 +252,18 @@ def datalake(
                 -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={1} --profile={2}" \
                 ec2-user@{3}'.format(data['ec2']['airflow_dns'], data['db']['region'],
                                     profile, data['db']['bastion_instance_id'])],shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+    
     print("\n[green]Succesfully connected to Datalake[/green]")
+
+    if connect is False:
+        connect = survey.routines.inquire("Do you want to connect to Datalake Shell?", default=True)
+        if connect:
+            return_code = subprocess.call(['aws ssm start-session --target {0} --profile={1} --region={2}'.format(data['ec2']['datalake_instance_id'], profile, data['db']['region'])], shell=True)
+
+            if return_code != 0:
+                raise Exception("error")
+        
+    
 
 
 @app.command()
@@ -284,6 +295,24 @@ def api_gateway(
         apikey.add_x_api_key(schema)
         return
     
+@app.command()
+@env_and_creds_layer
+def ec2(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None
+):
+    """
+    Connect to EC2 instance using the CLI
+    """
+    data = json.loads(data)
+    return_code = subprocess.call(['aws ssm start-session --target {0} --profile={1} --region={2}'.format(
+                            data['ec2']['ecs_ec2_instance_id'], profile, data['db']['region'])], shell=True)
+    if return_code != 0:
+        raise Exception("Failed to connect to EC2 instance.")
+    
+
+
 @app.command()
 def deploy(env: str = None, service: str = None, tag: str = None):
     """
