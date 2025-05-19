@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lji-meteor"
-version = "0.1.4"
+version = "0.1.5"
 description = ""
 authors = ["vinaybol <vinay.chindukuri@lji.io>"]
 readme = "README.md"

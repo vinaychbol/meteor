@@ -350,6 +350,13 @@ def upgrade():
     print("Please wait - Upgrading the CLI...")
     subprocess.call(['pipx install https://github.com/vinaychbol/meteor/raw/refs/heads/main/dist/lji_meteor-latest.gz --force'], shell=True)
     print("\n[green]Successfully upgraded the CLI[/green]")
+
+@app.command()
+def version():
+    """
+    Show the current version of the CLI
+    """
+    print("Current version: 1.0.0")
         
 if __name__ == "__main__":
     app()
