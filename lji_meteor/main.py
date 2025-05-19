@@ -50,8 +50,9 @@ def main():
  |_____\___/|___| [red]|_|  |_|\___|\__\___|\___/|_|   [/red]
                                                   
             """)
+    
 
-app = typer.Typer(callback=main())
+app = typer.Typer(callback=main(), pretty_exceptions_show_locals=False)
 
 try:
     aws_directory = str(sys.argv[1]) + str("/")
@@ -59,6 +60,27 @@ except:
     aws_directory = str("")
 
 console = Console()
+
+@app.callback(invoke_without_command=True)
+def default(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        # Ask user to select a default command if none is provided
+        commands_list = [
+            "webapp",
+            "db",
+            "datalake",
+            "api_gateway",
+            "ec2",
+            "deploy",
+            "upgrade"
+        ]
+        choice = commands_list[survey.routines.select('Select a command to execute : ', options = tuple(commands_list))]
+        print(f"\n[bold yellow]Selected Command :[/bold yellow] {choice}\n")
+        if choice in commands_list:
+            app([choice])
+        else:
+            print("Please use --help to see the available commands.")
+    
 
 def get_rsa_pair():
     id_rsa_pub_path = os.path.expanduser("~/.ssh/id_rsa.pub")
@@ -69,10 +91,6 @@ def get_rsa_pair():
             return id_rsa_pub
         
 id_rsa_public = get_rsa_pair()
-
-
-
-
 
 @app.command()
 @env_and_creds_layer
@@ -216,18 +234,7 @@ def datalake(
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     
-    # Start the loading spinner
-    with console.status("Please wait - Loading Congurations...", spinner="pong"):
-        try:
-            credentials = profile.strip()
-            session = boto3.Session(profile_name=credentials)
-            client = session.client('s3', region_name='us-west-2')
-            response = client.get_object(Bucket='gravty-comet', Key='comet-details.json')
-            data = json.loads(response['Body'].read())
-            data = data[env.strip().lower()]
-        except Exception as e:
-            console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
-            return
+
         
     with console.status("Please wait - Clearing ports...", spinner="monkey"):
                         out = subprocess.call(['kill $(lsof -t -i :9154) >/dev/null 2>&1'], shell=True)

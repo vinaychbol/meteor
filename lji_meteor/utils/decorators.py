@@ -18,7 +18,7 @@ def fetch_data_from_s3(profile):
             credentials = profile
             session = boto3.Session(profile_name=credentials)
             client = session.client('s3', region_name='us-west-2')
-            response = client.get_object(Bucket='gravty-comet', Key='comet-details.json')
+            response = client.get_object(Bucket='gravty-comet', Key='comet-detailsnew.json')
             data = json.loads(response['Body'].read())
             return data
         except Exception as e:
