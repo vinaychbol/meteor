@@ -26,15 +26,18 @@ def fetch_data_from_s3(profile):
             return None
     
 def fetch_envs(profile):
-    session = boto3.Session(profile_name=profile)
-    client = session.client('s3')
-    buckets = client.list_buckets(Prefix='gravty-ui-')
-    buckets = buckets['Buckets']
-    bucket_list = []
-    for bucket in buckets:
-        bucket_name = bucket['Name']
-        if 'gravty-ui-' in bucket_name:
-            bucket_list.append(bucket_name.split('-')[-1])
+    try:
+        session = boto3.Session(profile_name=profile)
+        client = session.client('s3')
+        buckets = client.list_buckets(Prefix='gravty-ui-')
+        buckets = buckets['Buckets']
+        bucket_list = []
+        for bucket in buckets:
+            bucket_name = bucket['Name']
+            if 'gravty-ui-' in bucket_name:
+                bucket_list.append(bucket_name.split('-')[-1])
+    except Exception as e:
+        return None
     return bucket_list
 
 def env_and_creds_layer(func):
@@ -55,6 +58,9 @@ def env_and_creds_layer(func):
 
         if kwargs['env'] is None:
             envs = fetch_envs(kwargs['profile'])
+            if envs is None:
+                console.print("\n[bold red]Error:[/bold red] Unable to fetch environments. Please check your AWS credentials and permissions. Falling back to manual selection.")
+                envs = list(data.keys())
             kwargs['env'] = envs[survey.routines.select('Select Environment : ', options = tuple(envs))]
             print(f"\n[bold yellow]Selected Environment :[/bold yellow] {kwargs['env']}")
             
