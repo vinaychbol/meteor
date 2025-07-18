@@ -26,10 +26,9 @@ class DB:
         with console.status("Please wait - Featching RDS Credentials...", spinner="earth"):
                 client = self.session.client('ssm', region_name=self.region)
                 paramenter_name = f"/db/{self.env}/rds/db-con-url"
-                print(f"\n[yellow]Fetching RDS Connection URL...{paramenter_name}[/yellow]")
+                print(f"\n[yellow]Fetching RDS Connection URL...[/yellow]")
                 response = client.get_parameter(Name=paramenter_name,WithDecryption=True)
                 db_con_url = response['Parameter']['Value']
-                print("\n[yellow]RDS Connection URL:[/yellow] " + db_con_url)
                 return db_con_url
     
     def connect(self):

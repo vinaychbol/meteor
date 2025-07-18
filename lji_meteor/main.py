@@ -167,15 +167,51 @@ def db(
     superuser: Annotated[str, typer.Option(help="Email of the superuser to be updated")] = None,
     tenant_schema: Annotated[str, typer.Option(help="Tenant schema name")] = None,
     email: Annotated[str, typer.Option(help="Email address for authentication")] = None):
+    generate_token: Annotated[bool, typer.Option(help="Flag to generate token for the user")] = False
     """
     Connect to RDS using the CLI or Use --options flag to see more options
     """
+    if generate_token:
+        print("\nRead Only Token -\n")
+        print("Username - {0}readonly\n".format(str(env).strip().lower()))
+        return_code = subprocess.call(['aws rds generate-db-auth-token --hostname {0} --port {1} \
+        --region {2} --username {3}readonly \
+        --profile {4}'.format(data['db']['rds'][:-5], data['db']['rds'][-4:],
+                                data['db']['az'][:-1],
+                                str(env.get()).strip().lower(),
+                                credentials)], shell=True)
+
+        if return_code != 0:
+            raise Exception("error")
+
+        print("\nWrite Access Token -\n")
+        print("Username - {0}user\n".format(str(env.get()).strip().lower()))
+        return_code = subprocess.call([aws_directory + 'aws rds generate-db-auth-token --hostname {0} --port {1} \
+        --region {2} --username {3}user \
+        --profile {4}'.format(data['db']['rds'][:-5], data['db']['rds'][-4:],
+                                data['db']['az'][:-1],
+                                str(env.get()).strip().lower(),
+                                credentials)], shell=True)
+        print()
+
+        if return_code != 0:
+            raise Exception("error")
+
+        if theme:
+            msg.config(bg='#5FCD69', text="Generated tokens for " + str(env.get()).strip().upper(),
+                        font='Helvetica', fg='Black')
+        else:
+            msg.config(bg='lightgreen', text="Generated tokens for " + str(env.get()).strip().upper(),
+                        font='Helvetica', fg='Black')
+        return
+    
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     db = rds.DB(session, data, profile, id_rsa_public, env)
     db_con_url = ""
     if get_credentials or superuser:
-        db_con_url = db.get_db_url()   
+        db_con_url = db.get_db_url()
+        print("\n[yellow]RDS Connection URL:[/yellow] " + db_con_url)
         
     if superuser:
         result = urlparse(db_con_url)
@@ -216,6 +252,18 @@ def db(
             if connection:
                 connection.close()
 
+    openui = survey.routines.inquire("Do you want to open table plus?", default=True)
+    if openui:
+        if  db_con_url == "":
+            db_con_url = db.get_db_url()
+            if not db_con_url:
+                raise Exception("Failed to get database connection URL.")
+        tmp = db_con_url.split("@")[-1].split("/")[-1]
+        formatted_db_con_url = db_con_url.split("@")[0]+f"@localhost:2345/{tmp}"
+        print("\n[yellow]Formatted RDS Connection URL for TablePlus:[/yellow] " + formatted_db_con_url)
+        return_code = subprocess.call("open -a TablePlus '{0}'".format(formatted_db_con_url), shell=True)
+        if return_code != 0:
+            raise Exception("error")
         
         
     
@@ -270,7 +318,11 @@ def datalake(
             if return_code != 0:
                 raise Exception("error")
         
-    
+
+    try:
+        subprocess.call(['open http://localhost:9154'], shell=True)
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
 
 
 @app.command()
