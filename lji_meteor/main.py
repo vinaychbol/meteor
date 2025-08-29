@@ -72,6 +72,7 @@ def default(ctx: typer.Context):
             "api_gateway",
             "ec2",
             "deploy",
+            "fittribe",
             "upgrade"
         ]
         choice = commands_list[survey.routines.select('Select a command to execute : ', options = tuple(commands_list))]
@@ -393,6 +394,67 @@ def deploy(env: str = None, service: str = None, tag: str = None):
     else:
         console.print("\n[bold blue]Deployment Triggered Successfully[/bold blue]")
         print(json.dumps(json.loads(response), indent=4))
+
+@app.command()
+@env_and_creds_layer
+def fittribe(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None):
+    """
+    Connect to Fittribe Flask using the CLI or Use --options flag to see more options
+    """
+    
+    data = json.loads(data)
+    session = boto3.Session(profile_name=profile)
+
+    if 'ecs' not in data:
+        console.print(f"[bold yellow]Warning:[/bold yellow] Webapp is still not configured for [bold cyan]{env.strip().upper()}[/bold cyan].")
+        return
+
+    cluster_id = data['ecs']['cluster_id']
+    ecs_region = data['db']['region']
+    console.print(f"[bold green]Found ECS Cluster:[/bold green] {cluster_id} in region {ecs_region}")
+        
+    ecs = session.client('ecs', region_name=ecs_region)
+        
+    try:
+        response = ecs.list_tasks(
+                cluster=cluster_id,
+                serviceName=f'fittribe-flaskapp-{env.strip().lower()}',
+                desiredStatus='RUNNING',
+            )
+        task_id = response['taskArns'][0].split('/')[-1]
+        response = ecs.describe_tasks(cluster=cluster_id, tasks=[response['taskArns'][0]])
+        response1 = ecs.describe_task_definition(
+                        taskDefinition=response['tasks'][0]['taskDefinitionArn']
+                )
+        container_Def = response1['taskDefinition']['containerDefinitions']
+        for con_def in container_Def:
+            if con_def['name'] == 'fittribe-flaskapp':
+                print('Connecting to Webapp container running version ' + con_def['image'].split(':')[1] + " ......")
+                break
+            
+        console.print(f"[bold green]Successfully connected to {env.strip().upper()} using profile {profile}.[/bold green]")
+        command = "/bin/bash"
+            
+        return_code = subprocess.call(
+                [f'aws ecs execute-command  \
+                --region {ecs_region} \
+                --cluster {cluster_id} \
+                --task {task_id} \
+                --profile {profile.strip()} \
+                --container fittribe-flaskapp \
+                --command "{command}" \
+                --interactive'],
+                shell=True
+        )
+        
+        if return_code != 0:
+            raise Exception(f"[bold red]Error:[/bold red] Failed to execute ECS command.")
+
+    except Exception as e:
+        console.print(f"[bold red]Error while connecting to ECS:[/bold red] {str(e)}")
         
 @app.command()
 def upgrade():
