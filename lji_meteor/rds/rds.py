@@ -26,7 +26,6 @@ class DB:
         with console.status("Please wait - Featching RDS Credentials...", spinner="earth"):
                 client = self.session.client('ssm', region_name=self.region)
                 paramenter_name = f"/db/{self.env}/rds/db-con-url"
-                print(f"\n[yellow]Fetching RDS Connection URL...[/yellow]")
                 response = client.get_parameter(Name=paramenter_name,WithDecryption=True)
                 db_con_url = response['Parameter']['Value']
                 return db_con_url
@@ -34,9 +33,8 @@ class DB:
     def connect(self):
         with console.status("Please wait - Clearing ports...", spinner="bouncingBar"):
             out = subprocess.call(['kill $(lsof -t -i :2345) >/dev/null 2>&1'], shell=True)
-            out = subprocess.call(['kill $(lsof -t -i :9736) >/dev/null 2>&1'], shell=True)
-            out = subprocess.call(['kill $(lsof -t -i :8843) >/dev/null 2>&1'], shell=True)
-            print("\n[yellow]Cleared the ports successfully[/yellow]")
+
+        print("\n[yellow]Cleared the ports successfully[/yellow]\n")
                             
         with console.status("Please wait - Connecting to RDS...", spinner="earth"):
             response = self.session.client('ec2-instance-connect', region_name=self.region).send_ssh_public_key(
@@ -57,6 +55,7 @@ class DB:
             -L 5439:{0} \
             -o "UserKnownHostsFile=/dev/null" \
             -o "StrictHostKeyChecking=no" \
+            -o "LogLevel=ERROR" \
             -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={3} --profile={4}" \
             ec2-user@{5}'.format(self.data['db']['rds'], self.data['db']['redshift'], self.data['db']['redis'],
                                 self.region, self.profile.strip(), self.data['db']['bastion_instance_id'],

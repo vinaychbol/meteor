@@ -1,24 +1,37 @@
 import os
 import json
+import shutil
 import boto3
+from botocore.exceptions import ClientError
 import typer
 from typing_extensions import Annotated
 import survey
 import sys
+import pyperclip 
 import subprocess
 from rich import print
 from rich.console import Console
 from rich.progress import Progress
 from rich.spinner import Spinner
 from rich.text import Text
+from rich.live import Live
+from rich.table import Table
 import time
-from lji_meteor.utils.decorators import env_and_creds_layer
+
+# Custom spinner frames for different operations
+SPINNERS = {
+    'connecting': ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+    'loading': ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'],
+    'dots': ['⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳', '⠓'],
+    'pulse': ['█⠀', '██', '███', '████', '█████', '██████', '█████', '████', '███', '██', '█⠀'],
+}
+from utils.decorators import env_and_creds_layer
 from typing import Any
 
-from lji_meteor.tenant.tenant import Tenant
-from lji_meteor.api_gateway import api_key, stages
-from lji_meteor.rds import rds
-from lji_meteor.autodeployment import deploy_lambda
+from tenant.tenant import Tenant
+from api_gateway import api_key, stages
+from rds import rds
+from autodeployment import deploy_lambda
 
 from urllib.parse import urlparse
 import psycopg2
@@ -64,23 +77,27 @@ console = Console()
 @app.callback(invoke_without_command=True)
 def default(ctx: typer.Context):
     if ctx.invoked_subcommand is None:
-        # Ask user to select a default command if none is provided
+        console.print("\n[bold cyan]🎯 Available Commands:[/bold cyan]")
         commands_list = [
-            "webapp",
-            "db",
-            "datalake",
-            "api_gateway",
-            "ec2",
-            "deploy",
-            "fittribe",
-            "upgrade"
+            "webapp     📱",
+            "db        💾",
+            "datalake  📊",
+            "api_gateway 🔌",
+            "ec2       🖥️ ",
+            "deploy    🚀",
+            "fittribe  💪",
+            "upgrade   ⬆️ "
         ]
-        choice = commands_list[survey.routines.select('Select a command to execute : ', options = tuple(commands_list))]
-        print(f"\n[bold yellow]Selected Command :[/bold yellow] {choice}\n")
-        if choice in commands_list:
+        
+        choice = commands_list[survey.routines.select('Select a command to execute:', options=tuple(commands_list))]
+        choice = choice.split()[0]  # Extract command name without emoji
+        
+        console.print(f"\n[bold green]🎉 Selected Command:[/bold green] [bold cyan]{choice}[/bold cyan]\n")
+        
+        if choice in [cmd.split()[0] for cmd in commands_list]:
             app([choice])
         else:
-            print("Please use --help to see the available commands.")
+            console.print("[bold yellow]ℹ️  Please use --help to see the available commands.[/bold yellow]")
     
 
 def get_rsa_pair():
@@ -92,6 +109,77 @@ def get_rsa_pair():
             return id_rsa_pub
         
 id_rsa_public = get_rsa_pair()
+
+@app.command()
+def doctor():
+    """Checks for requirements for command-line tools."""
+    # The AWS CLI (aws) and Session Manager Plugin are required.
+    required_tools = {
+        "aws": "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
+        "session-manager-plugin": "https://docs.aws.amazon.com/systems-manager/latest/userguide/install-ssm-plugin.html"
+    }
+    
+    with console.status("[bold blue]🔍 Checking dependencies...[/bold blue]", spinner="dots"):
+        missing_tools = [tool for tool in required_tools if not shutil.which(tool)]
+
+    if missing_tools:
+        console.print("\n[bold red]❌ Error: Missing Required Dependencies![/bold red]")
+        for tool in missing_tools:
+            console.print(f"  [bold red]•[/bold red] [bold]{tool}[/bold] was not found")
+            console.print(f"    📥 Install from: [blue underline]{required_tools[tool]}[/blue underline]")
+        sys.exit(1)
+    else:
+        console.print("\n[bold green]✅ All required dependencies are installed![/bold green]")
+
+@app.command()
+@env_and_creds_layer
+def redshift(
+    env: Annotated[str, typer.Option(help="Environment Name")] = None,
+    profile: Annotated[str, typer.Option(help="AWS Profile Name")] = None,
+    data: Annotated[str, typer.Option(help="Configuration Data in JSON format")] = None):
+    """
+    Connect to Redshift using the CLI or Use --options flag to see more options
+    """
+    data = json.loads(data)
+    session = boto3.Session(profile_name=profile)
+    
+    try:
+        if len(data['db']['redshift']) == 0:
+            raise Exception()
+        try:
+            out = subprocess.call(['kill $(lsof -t -i :5439) >/dev/null 2>&1'], shell=True)
+            print("\n[yellow]Cleared the ports successfully[/yellow]")
+            with console.status("Please wait - Connecting to Redshift...", spinner="earth"):
+                    response = session.client('ec2-instance-connect', region_name=data['db']['region']).send_ssh_public_key(
+                            InstanceId=data['db']['bastion_instance_id'],
+                            InstanceOSUser='ec2-user',
+                            SSHPublicKey=id_rsa_public,
+                            AvailabilityZone=data['db']['az']
+                        )
+                    
+                    if not response['Success']:
+                        raise Exception("Something went wrong with SSH")
+
+                    return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
+                        -Nf -M \
+                        -L 5439:{0} \
+                        -o "UserKnownHostsFile=/dev/null" \
+                        -o "StrictHostKeyChecking=no" \
+                        -o ProxyCommand="aws ssm start-session --target %h --document AWS-StartSSHSession --parameters portNumber=%p --region={1} --reason="REDSHIFT" --profile={2}" \
+                        ec2-user@{3}'.format(data['db']['redshift'], data['db']['region'],
+                                            profile, data['db']['bastion_instance_id'])],
+                                            shell=True)
+
+            if return_code != 0:
+                raise Exception("error")
+
+        except Exception as e:
+            console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
+            return
+
+    except Exception as e:
+        console.print(f"\n[bold yellow]Warning:[/bold yellow] Redshift is still not configured for [bold cyan]{env.strip().upper()}[/bold cyan].")
+        return
 
 @app.command()
 @env_and_creds_layer
@@ -118,45 +206,75 @@ def webapp(
     ecs = session.client('ecs', region_name=ecs_region)
         
     try:
-        response = ecs.list_tasks(
+        with console.status("[bold blue]🔍 Looking for running webapp tasks...[/bold blue]", spinner="dots"):
+            response = ecs.list_tasks(
                 cluster=cluster_id,
                 serviceName=f'webapp-mainV2-{env.strip().lower()}',
                 desiredStatus='RUNNING',
             )
-        task_id = response['taskArns'][0].split('/')[-1]
-        taskId = response['taskArns'][0].split('/')[-1]
-        response = ecs.describe_tasks(cluster=cluster_id, tasks=[response['taskArns'][0]])
-        response1 = ecs.describe_task_definition(
-                        taskDefinition=response['tasks'][0]['taskDefinitionArn']
-                )
-        container_Def = response1['taskDefinition']['containerDefinitions']
-        for con_def in container_Def:
-            if con_def['name'] == 'webapp-main':
-                print('Connecting to Webapp container running version ' + con_def['image'].split(':')[1] + " ......")
-                break
             
-        console.print(f"[bold green]Successfully connected to {env.strip().upper()} using profile {profile}.[/bold green]")
+            if not response.get('taskArns'):
+                raise Exception("No running webapp tasks found")
+                
+            task_id = response['taskArns'][0].split('/')[-1]
+            response = ecs.describe_tasks(cluster=cluster_id, tasks=[response['taskArns'][0]])
+            
+            task_def_response = ecs.describe_task_definition(
+                taskDefinition=response['tasks'][0]['taskDefinitionArn']
+            )
+            
+            container_found = False
+            for container in task_def_response['taskDefinition']['containerDefinitions']:
+                if container['name'] == 'webapp-main':
+                    version = container['image'].split(':')[1]
+                    container_found = True
+                    break
+            
+            if not container_found:
+                raise Exception("Webapp container not found in task definition")
+        
+        console.print(f"\n[bold blue]📦 Webapp Container Information[/bold blue]")
+        console.print(f"[cyan]Version:[/cyan] [green]{version}[/green]")
+        console.print(f"[cyan]Environment:[/cyan] [green]{env.strip().upper()}[/green]")
+        console.print(f"[cyan]Profile:[/cyan] [green]{profile}[/green]\n")
+        
         command = "/bin/bash"
         if tenant_creation:
-            tenant.create(ecs_region, cluster_id, task_id, profile, command, env)
-            
+            with console.status("[bold blue]🔧 Creating tenant...[/bold blue]", spinner="dots"):
+                tenant.create(ecs_region, cluster_id, task_id, profile, command, env)
+        
+        console.print("[bold blue]🔌 Connecting to webapp container...[/bold blue]")
         return_code = subprocess.call(
-                [f'aws ecs execute-command  \
-                --region {ecs_region} \
-                --cluster {cluster_id} \
-                --task {task_id} \
-                --profile {profile.strip()} \
-                --container webapp-main \
-                --command "{command}" \
-                --interactive'],
-                shell=True
+            [f'aws ecs execute-command  \
+            --region {ecs_region} \
+            --cluster {cluster_id} \
+            --task {task_id} \
+            --profile {profile.strip()} \
+            --container webapp-main \
+            --command "{command}" \
+            --interactive'],
+            shell=True
         )
         
         if return_code != 0:
-            raise Exception(f"[bold red]Error:[/bold red] Failed to execute ECS command.")
+            raise Exception("Failed to execute ECS command - please check your permissions and try again")
 
     except Exception as e:
-        console.print(f"[bold red]Error while connecting to ECS:[/bold red] {str(e)}")
+        error_msg = str(e)
+        console.print("\n[bold red]❌ Connection Error[/bold red]")
+        console.print(f"[red]└── {error_msg}[/red]")
+        
+        # Provide helpful troubleshooting tips based on the error
+        if "No running webapp tasks found" in error_msg:
+            console.print("\n[bold yellow]💡 Troubleshooting Tips:[/bold yellow]")
+            console.print("1. Check if the webapp service is deployed")
+            console.print("2. Verify the service name is correct")
+            console.print("3. Check if the tasks are healthy")
+        elif "permissions" in error_msg.lower():
+            console.print("\n[bold yellow]💡 Troubleshooting Tips:[/bold yellow]")
+            console.print("1. Verify your AWS credentials")
+            console.print("2. Check your IAM permissions")
+            console.print("3. Ensure your profile has ECS execute-command access")
 
 @app.command()
 @env_and_creds_layer
@@ -168,62 +286,58 @@ def db(
     superuser: Annotated[str, typer.Option(help="Email of the superuser to be updated")] = None,
     tenant_schema: Annotated[str, typer.Option(help="Tenant schema name")] = None,
     email: Annotated[str, typer.Option(help="Email address for authentication")] = None):
-    generate_token: Annotated[bool, typer.Option(help="Flag to generate token for the user")] = False
     """
     Connect to RDS using the CLI or Use --options flag to see more options
     """
-    if generate_token:
-        print("\nRead Only Token -\n")
-        print("Username - {0}readonly\n".format(str(env).strip().lower()))
-        return_code = subprocess.call(['aws rds generate-db-auth-token --hostname {0} --port {1} \
-        --region {2} --username {3}readonly \
-        --profile {4}'.format(data['db']['rds'][:-5], data['db']['rds'][-4:],
-                                data['db']['az'][:-1],
-                                str(env.get()).strip().lower(),
-                                credentials)], shell=True)
-
-        if return_code != 0:
-            raise Exception("error")
-
-        print("\nWrite Access Token -\n")
-        print("Username - {0}user\n".format(str(env.get()).strip().lower()))
-        return_code = subprocess.call([aws_directory + 'aws rds generate-db-auth-token --hostname {0} --port {1} \
-        --region {2} --username {3}user \
-        --profile {4}'.format(data['db']['rds'][:-5], data['db']['rds'][-4:],
-                                data['db']['az'][:-1],
-                                str(env.get()).strip().lower(),
-                                credentials)], shell=True)
-        print()
-
-        if return_code != 0:
-            raise Exception("error")
-
-        if theme:
-            msg.config(bg='#5FCD69', text="Generated tokens for " + str(env.get()).strip().upper(),
-                        font='Helvetica', fg='Black')
-        else:
-            msg.config(bg='lightgreen', text="Generated tokens for " + str(env.get()).strip().upper(),
-                        font='Helvetica', fg='Black')
-        return
-    
     data = json.loads(data)
+    iswritepermission = survey.routines.inquire("Do you want write access to the database?", default=False)
+
+    def create_progress_table() -> Table:
+        table = Table(show_header=False, box=None)
+        table.add_row("[bold blue]Database Connection Progress[/bold blue]")
+        table.add_row("└── [yellow]Authenticating...[/yellow]")
+        return table
+
+    with Live(create_progress_table(), refresh_per_second=10) as live:
+        user = str(env).strip().lower() + ('user' if iswritepermission else 'readonly')
+        
+        table = create_progress_table()
+        table.add_row("    └── [cyan]Generating token...[/cyan]")
+        live.update(table)
+        
+        result = subprocess.run(
+            ['aws', 'rds', 'generate-db-auth-token',
+             '--hostname', data['db']['rds'][:-5],
+             '--port', data['db']['rds'][-4:],
+             '--region', data['db']['az'][:-1],
+             '--username', user,
+             '--profile', profile],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True 
+        )
+        
+        table = create_progress_table()
+        if result.returncode == 0:
+            db_password_token = result.stdout.strip()
+            table.add_row("    └── [green]✅ Token generated successfully[/green]")
+        else:
+            table.add_row("    └── [red]❌ Failed to generate token[/red]")
+            table.add_row(f"        └── [red]{result.stderr}[/red]")
+        live.update(table)
     session = boto3.Session(profile_name=profile)
     db = rds.DB(session, data, profile, id_rsa_public, env)
     db_con_url = ""
-    if get_credentials or superuser:
-        db_con_url = db.get_db_url()
-        print("\n[yellow]RDS Connection URL:[/yellow] " + db_con_url)
-        
-    if superuser:
-        result = urlparse(db_con_url)
-        username = result.username
-        password = result.password
-        database = result.path[1:]  # Removing the leading slash from the path
-        hostname = "localhost"
-        port = "2345"
+    db_con_url = db.get_db_url()
+    result = urlparse(db_con_url)
+    username = result.username
+    password = result.password
+    database = result.path[1:]  # Removing the leading slash from the path
+    hostname = "localhost"
+    port = "2345"
 
+    if superuser:
         try:
-            # Establish connection to the database
             connection = psycopg2.connect(
                 database=database,
                 user=username,
@@ -231,7 +345,6 @@ def db(
                 host=hostname,
                 port=port
             )
-            
             with connection.cursor() as curs:
                 if not tenant_schema:
                     tenant_schema = input("Enter the tenant schema: ")
@@ -245,7 +358,6 @@ def db(
                 connection.commit()
 
                 print(f"Updated user {superuser} in schema {tenant_schema}.")
-
         except Exception as e:
             print(f"Error connecting to the database: {e}")
         finally:
@@ -253,21 +365,16 @@ def db(
             if connection:
                 connection.close()
 
-    openui = survey.routines.inquire("Do you want to open table plus?", default=True)
-    if openui:
-        if  db_con_url == "":
-            db_con_url = db.get_db_url()
-            if not db_con_url:
-                raise Exception("Failed to get database connection URL.")
-        tmp = db_con_url.split("@")[-1].split("/")[-1]
-        formatted_db_con_url = db_con_url.split("@")[0]+f"@localhost:2345/{tmp}"
-        print("\n[yellow]Formatted RDS Connection URL for TablePlus:[/yellow] " + formatted_db_con_url)
-        return_code = subprocess.call("open -a TablePlus '{0}'".format(formatted_db_con_url), shell=True)
-        if return_code != 0:
-            raise Exception("error")
-        
-        
-    
+    # Print connection details for RDS
+    console.print("\n[bold blue]------- RDS Connection Details -------[bold blue]")
+    console.print(f"Username: [bold green]{username}[/bold green]")
+    console.print(f"Database: [bold green]{database}[/bold green]")
+    console.print(f"Host: [bold green]{hostname}[/bold green]")
+    console.print(f"Port: [bold green]{port}[/bold green]")
+
+    pyperclip.copy(db_password_token)
+    print("\n[bold green]Database Password Token copied to clipboard![/bold green]")
+    console.print("\n[green]Succesfully connected to RDS[/green]")
 
 @app.command()
 @env_and_creds_layer
@@ -283,11 +390,10 @@ def datalake(
     data = json.loads(data)
     session = boto3.Session(profile_name=profile)
     
-
-        
     with console.status("Please wait - Clearing ports...", spinner="monkey"):
-                        out = subprocess.call(['kill $(lsof -t -i :9154) >/dev/null 2>&1'], shell=True)
-                        print("\n[yellow]Cleared the ports successfully[/yellow]")
+        out = subprocess.call(['kill $(lsof -t -i :9154) >/dev/null 2>&1'], shell=True)
+
+    print("\n[yellow]Cleared the ports successfully[/yellow]")
                         
     with console.status("Please wait - Connecting to Datalake...", spinner="earth"):
                         response = session.client('ec2-instance-connect', region_name=data['db']['region']).send_ssh_public_key(
@@ -297,8 +403,8 @@ def datalake(
                                 AvailabilityZone=data['db']['az']
                             )
                         
-                        if not response['Success']:
-                            raise Exception("Something went wrong with SSH")
+    if not response['Success']:
+        raise Exception("Something went wrong with SSH")
                             
     return_code = subprocess.call(['ssh -i ~/.ssh/id_rsa \
                 -Nf -M \
@@ -314,12 +420,61 @@ def datalake(
     if connect is False:
         connect = survey.routines.inquire("Do you want to connect to Datalake Shell?", default=True)
         if connect:
-            return_code = subprocess.call(['aws ssm start-session --target {0} --profile={1} --region={2}'.format(data['ec2']['datalake_instance_id'], profile, data['db']['region'])], shell=True)
-
-            if return_code != 0:
-                raise Exception("error")
-        
-
+            cluster_id = data['ecs']['cluster_id']
+            ecs = session.client('ecs', region_name=data['db']['region'])
+            has_ec2 = True
+            try:
+                response = ecs.list_tasks(
+                    cluster=cluster_id,
+                    serviceName='datalake-' + str(env).strip().lower(),
+                    desiredStatus='RUNNING',
+                )
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ServiceNotFoundException':
+                    console.print(f"\n[bold red]Error:[/bold red] Datalake ECS is still not configured for [bold cyan]{env.strip().upper()}[/bold cyan]. Falling back to EC2.")
+                    has_ec2 = False
+                else:
+                    console.print(f"\n[bold red]An unexpected AWS error occurred:[/bold red] {e}")
+                    return
+            if has_ec2:
+                taskId = response['taskArns'][0].split('/')[-1]
+                response = ecs.describe_tasks(cluster=cluster_id, tasks=[response['taskArns'][0]])
+                response1 = ecs.describe_task_definition(
+                    taskDefinition=response['tasks'][0]['taskDefinitionArn']
+                )
+                container_Def = response1['taskDefinition']['containerDefinitions']
+                for con_def in container_Def:
+                    if con_def['name'] == 'airflow':
+                        print('Connecting to airflow container running version ' +
+                                con_def['image'].split(':')[1] + " ......")
+                        break
+                aws_command = ["aws",
+                                "ecs",
+                                "execute-command",
+                                "--region",
+                                data['db']['region'],
+                                "--cluster",
+                                cluster_id,
+                                "--task",
+                                taskId,
+                                "--profile",
+                                profile,
+                                "--container",
+                                "airflow",
+                                "--command",
+                                "gosu airflow /bin/bash",
+                                "--interactive"
+                                ]
+                try:
+                    subprocess.run(aws_command, check=True)
+                except subprocess.CalledProcessError as e:
+                    console.log("Failed to connect to ECS container. {e}")
+            else:
+                try:
+                    return_code = subprocess.call(['aws ssm start-session --target {0} --profile={1} --region={2}'.format(data['ec2']['datalake_instance_id'], profile, data['db']['region'])], shell=True)
+                except Exception as e:
+                    console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
+        return
     try:
         subprocess.call(['open http://localhost:9154'], shell=True)
     except Exception as e:
@@ -470,7 +625,16 @@ def version():
     """
     Show the current version of the CLI
     """
-    print("Current version: 1.0.0")
+    version_info = {
+        'version': '1.0.0',
+        'release_date': '2025-10-16'
+    }
+    
+    console.print("\n[bold blue]📦 LJI Meteor CLI[/bold blue]")
+    console.print("=" * 40)
+    console.print(f"[bold cyan]Version:[/bold cyan]      [green]{version_info['version']}[/green]")
+    console.print(f"[bold cyan]Released:[/bold cyan]     [green]{version_info['release_date']}[/green]")
+    console.print("=" * 40)
         
 if __name__ == "__main__":
     app()

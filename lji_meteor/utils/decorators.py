@@ -20,6 +20,7 @@ def fetch_data_from_s3(profile):
             client = session.client('s3', region_name='us-west-2')
             response = client.get_object(Bucket='gravty-comet', Key='comet-detailsnew.json')
             data = json.loads(response['Body'].read())
+            # print(data)
             return data
         except Exception as e:
             console.print(f"\n[bold red]Error at :[/bold red] {str(e)}")

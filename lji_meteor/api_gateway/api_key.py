@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 from rich import print
 import json
 
-from lji_meteor.rds import rds
+from rds import rds
 
 class ApiKey():
     
