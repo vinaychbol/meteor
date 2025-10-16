@@ -2,9 +2,6 @@ import boto3
 import psycopg2
 from urllib.parse import urlparse
 from rich import print
-import json
-
-from rds import rds
 
 class ApiKey():
     

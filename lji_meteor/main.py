@@ -25,13 +25,13 @@ SPINNERS = {
     'dots': ['⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳', '⠓'],
     'pulse': ['█⠀', '██', '███', '████', '█████', '██████', '█████', '████', '███', '██', '█⠀'],
 }
-from utils.decorators import env_and_creds_layer
+from .utils.decorators import env_and_creds_layer
 from typing import Any
 
-from tenant.tenant import Tenant
-from api_gateway import api_key, stages
-from rds import rds
-from autodeployment import deploy_lambda
+from .tenant.tenant import Tenant
+from .api_gateway import api_key, stages
+from .rds import rds
+from .autodeployment import deploy_lambda
 
 from urllib.parse import urlparse
 import psycopg2

@@ -1,0 +1,1 @@
+"""Auto deployment module for LJI Meteor CLI"""
