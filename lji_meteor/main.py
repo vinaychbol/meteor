@@ -25,13 +25,13 @@ SPINNERS = {
     'dots': ['⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳', '⠓'],
     'pulse': ['█⠀', '██', '███', '████', '█████', '██████', '█████', '████', '███', '██', '█⠀'],
 }
-from .utils.decorators import env_and_creds_layer
+from utils.decorators import env_and_creds_layer
 from typing import Any
 
-from .tenant.tenant import Tenant
-from .api_gateway import api_key, stages
-from .rds import rds
-from .autodeployment import deploy_lambda
+from tenant.tenant import Tenant
+from api_gateway import api_key, stages
+from rds import rds
+from autodeployment import deploy_lambda
 
 from urllib.parse import urlparse
 import psycopg2
@@ -336,6 +336,10 @@ def db(
     hostname = "localhost"
     port = "2345"
 
+    if get_credentials:
+        console.print("\n[bold yellow]Warning:[/bold yellow] Using root/master credentials can pose security risks. Handle them securely.")
+        console.print(f"\nDB Connection: [bold green]{db_con_url}[/bold green]\n")
+
     if superuser:
         try:
             connection = psycopg2.connect(
@@ -431,11 +435,10 @@ def datalake(
                 )
             except ClientError as e:
                 if e.response['Error']['Code'] == 'ServiceNotFoundException':
-                    console.print(f"\n[bold red]Error:[/bold red] Datalake ECS is still not configured for [bold cyan]{env.strip().upper()}[/bold cyan]. Falling back to EC2.")
+                    console.print(f"\n[bold yellow]Warning:[/bold yellow] Datalake ECS is still not configured for [bold cyan]{env.strip().upper()}[/bold cyan]. Falling back to EC2.")
                     has_ec2 = False
                 else:
-                    console.print(f"\n[bold red]An unexpected AWS error occurred:[/bold red] {e}")
-                    return
+                    console.print(f"\n[bold yellow]Warninig:[/bold yellow] {e} . Falling back to EC2.")
             if has_ec2:
                 taskId = response['taskArns'][0].split('/')[-1]
                 response = ecs.describe_tasks(cluster=cluster_id, tasks=[response['taskArns'][0]])
